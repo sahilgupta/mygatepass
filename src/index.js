@@ -61,6 +61,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
     </div>
 
     <script>
+        var accessKey, userid;
+
         async function sendOTP() {
             const mobileNumber = document.getElementById('mobileNumber').value;
             try {
@@ -92,6 +94,9 @@ const HTML_CONTENT = `<!DOCTYPE html>
                 });
                 const data = await response.json();
                 if (data.success) {
+                	accessKey = data.data.access_key;
+                	userId = data.data.user_id;
+
                     document.getElementById('step2').classList.add('hidden');
                     document.getElementById('step3').classList.remove('hidden');
                 } else {
@@ -104,12 +109,13 @@ const HTML_CONTENT = `<!DOCTYPE html>
 
         async function submitForm() {
             const formData = {
+                user_id: userId,
+                access_key: accessKey,
                 mobile_number: document.getElementById('mobileNumber').value,
                 company_name: document.getElementById('companyName').value,
                 start_time: document.getElementById('startTime').value,
                 end_time: document.getElementById('endTime').value,
                 num_days: document.getElementById('numDays').value,
-                otp: document.getElementById('otp').value
             };
 
             try {
@@ -204,14 +210,14 @@ async function loginWithOtp(mobileNumber, otp) {
     return await makeRequest("POST", LOGIN_URL, COMMON_HEADERS, payload);
 }
 
-async function getUserInfo(apiKey, userId) {
-    const headers = { ...COMMON_HEADERS, "access-key": apiKey };
+async function getUserInfo(accessKey, userId) {
+    const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = { userid: userId };
     return await makeRequest("POST", INFO_URL, headers, payload);
 }
 
-async function sendPreapproveRequest(apiKey, userId, flatId, companyName, startTime, endTime) {
-    const headers = { ...COMMON_HEADERS, "access-key": apiKey };
+async function sendPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime) {
+    const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = {
         isMulti: 0,
         visitorAddress: companyName,
@@ -252,14 +258,14 @@ async function handleVerifyOtp(requestBody) {
         }
 
         const loginData = await loginWithOtp(mobileNumber, otp);
-        const apiKey = loginData.api_key;
+        const accessKey = loginData.api_key;
         const userId = loginData.userid;
 
-        if (!apiKey || !userId) {
+        if (!accessKey || !userId) {
             return new Response(JSON.stringify({ error: "Invalid OTP" }), { status: 400 });
         }
 
-        return new Response(JSON.stringify({ success: true, message: "OTP verified successfully" }), { status: 200 });
+        return new Response(JSON.stringify({ success: true, message: "OTP verified successfully", data: {"access_key": accessKey, "user_id": userId}}), { status: 200 });
     } catch (error) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
     }
@@ -267,26 +273,20 @@ async function handleVerifyOtp(requestBody) {
 
 async function handlePreApprove(requestBody) {
     try {
+        const userId = requestBody.user_id;
+        const accessKey = requestBody.access_key;
+
         const mobileNumber = requestBody.mobile_number;
         const companyName = requestBody.company_name;
         const startTime = requestBody.start_time;
         const endTime = requestBody.end_time;
         const numDays = parseInt(requestBody.num_days, 10);
-        const otp = requestBody.otp;
 
-        if (!mobileNumber || !companyName || !startTime || !endTime || !otp) {
+        if (!userId || !mobileNumber || !companyName || !startTime || !endTime || !accessKey) {
             return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
         }
 
-        const loginData = await loginWithOtp(mobileNumber, otp);
-        const apiKey = loginData.api_key;
-        const userId = loginData.userid;
-
-        if (!apiKey || !userId) {
-            return new Response(JSON.stringify({ error: "Invalid OTP" }), { status: 400 });
-        }
-
-        const userData = await getUserInfo(apiKey, userId);
+        const userData = await getUserInfo(accessKey, userId);
         const flatId = userData.activeflat;
 
         if (!flatId) {
@@ -296,7 +296,7 @@ async function handlePreApprove(requestBody) {
         const intervals = generateEpochIntervals(startTime, endTime, numDays);
         const responses = [];
         for (const [start, end] of intervals) {
-            const response = await sendPreapproveRequest(apiKey, userId, flatId, companyName.toUpperCase(), start, end);
+            const response = await sendPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end);
             responses.push(response);
         }
 
