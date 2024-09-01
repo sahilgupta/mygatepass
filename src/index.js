@@ -24,7 +24,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
     <div class="bg-white p-8 rounded-lg shadow-md w-96">
-        <h1 class="text-2xl font-bold mb-4">MyGate Pre-approval</h1>
+        <h1 class="text-2xl font-bold mb-4">Fuck MyGate</h1>
+        <p class="text-lg font-medium text-gray-600 mb-4">Pre-approve multiple entries. For free!</p>
 
         <!-- Step 1: Mobile Number -->
         <div id="step1" class="mb-4">
@@ -46,13 +47,13 @@ const HTML_CONTENT = `<!DOCTYPE html>
             <input type="text" id="companyName" class="w-full p-2 border rounded mb-4" required>
 
             <label for="startTime" class="block mb-2">Start Time:</label>
-            <input type="time" id="startTime" class="w-full p-2 border rounded mb-4" required>
+            <input type="time" id="startTime" value="08:00" class="w-full p-2 border rounded mb-4" required>
 
             <label for="endTime" class="block mb-2">End Time:</label>
-            <input type="time" id="endTime" class="w-full p-2 border rounded mb-4" required>
+            <input type="time" id="endTime" value="22:00" class="w-full p-2 border rounded mb-4" required>
 
             <label for="numDays" class="block mb-2">Number of Days:</label>
-            <input type="number" id="numDays" class="w-full p-2 border rounded mb-4" min="1" value="1" required>
+            <input type="number" id="numDays" class="w-full p-2 border rounded mb-4" min="1" value="30" required>
 
             <button onclick="submitForm()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Submit</button>
         </div>
