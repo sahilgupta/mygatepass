@@ -24,7 +24,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
     <div class="bg-white p-8 rounded-lg shadow-md w-96">
-        <h1 class="text-2xl font-bold mb-4">Fuck MyGate</h1>
+        <h1 class="text-2xl font-bold mb-4">Bypass MyGate</h1>
         <p class="text-lg font-medium text-gray-600 mb-4">Pre-approve multiple entries. For free!</p>
 
         <!-- Step 1: Mobile Number -->
@@ -62,10 +62,23 @@ const HTML_CONTENT = `<!DOCTYPE html>
     </div>
 
     <script>
-        var accessKey, userid;
+        var accessKey, userId, mobileNumber;
+
+        window.onload = function() {
+            accessKey = localStorage.getItem('accessKey');
+            mobileNumber = localStorage.getItem('mobileNumber');
+            userId = localStorage.getItem('userId');
+
+            if (accessKey && userId && mobileNumber) {
+                // Show step 3 form directly if accessKey is present
+                document.getElementById('step1').classList.add('hidden');
+                document.getElementById('step2').classList.add('hidden');
+                document.getElementById('step3').classList.remove('hidden');
+            }
+        };
 
         async function sendOTP() {
-            const mobileNumber = document.getElementById('mobileNumber').value;
+            mobileNumber = document.getElementById('mobileNumber').value;
             try {
                 const response = await fetch('/send-otp', {
                     method: 'POST',
@@ -85,7 +98,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
         }
 
         async function verifyOTP() {
-            const mobileNumber = document.getElementById('mobileNumber').value;
+            mobileNumber = document.getElementById('mobileNumber').value;
             const otp = document.getElementById('otp').value;
             try {
                 const response = await fetch('/verify-otp', {
@@ -95,8 +108,14 @@ const HTML_CONTENT = `<!DOCTYPE html>
                 });
                 const data = await response.json();
                 if (data.success) {
-                	accessKey = data.data.access_key;
-                	userId = data.data.user_id;
+                    accessKey = data.data.access_key;
+                    userId = data.data.user_id;
+                    mobileNumber = data.data.mobile_number;
+
+                    // Store the data in local storage
+                    localStorage.setItem('accessKey', accessKey);
+                    localStorage.setItem('mobileNumber', mobileNumber);
+                    localStorage.setItem('userId', userId);
 
                     document.getElementById('step2').classList.add('hidden');
                     document.getElementById('step3').classList.remove('hidden');
@@ -112,7 +131,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
             const formData = {
                 user_id: userId,
                 access_key: accessKey,
-                mobile_number: document.getElementById('mobileNumber').value,
+                mobile_number: mobileNumber,
                 company_name: document.getElementById('companyName').value,
                 start_time: document.getElementById('startTime').value,
                 end_time: document.getElementById('endTime').value,
@@ -266,7 +285,8 @@ async function handleVerifyOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Invalid OTP" }), { status: 400 });
         }
 
-        return new Response(JSON.stringify({ success: true, message: "OTP verified successfully", data: {"access_key": accessKey, "user_id": userId}}), { status: 200 });
+        return new Response(JSON.stringify({ success: true, message: "OTP verified successfully",
+        		data: {"mobile_number": mobileNumber, "access_key": accessKey, "user_id": userId}}), { status: 200 });
     } catch (error) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
     }
