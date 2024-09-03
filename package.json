@@ -1,6 +1,6 @@
 {
-  "name": "fuck-mygate",
-  "version": "0.0.0",
+  "name": "mygate-approvals",
+  "version": "0.0.2",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
