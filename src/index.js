@@ -127,15 +127,33 @@ const HTML_CONTENT = `<!DOCTYPE html>
             }
         }
 
+		function generateEpochIntervals(startTimeStr, endTimeStr, numDays = 1) {
+		    const startTime = new Date(\`1970-01-01T\${startTimeStr}:00Z\`);
+		    const endTime = new Date(\`1970-01-01T\${endTimeStr}:00Z\`);
+		    const today = new Date();
+		    today.setHours(0, 0, 0, 0);
+
+		    let intervals = [];
+		    for (let i = 0; i < numDays; i++) {
+		        const currentDate = new Date(today.getTime() + i * 86400000);
+		        const startEpoch = Math.floor(currentDate.getTime() / 1000) + startTime.getTime() / 1000;
+		        const endEpoch = Math.floor(currentDate.getTime() / 1000) + endTime.getTime() / 1000;
+		        intervals.push([startEpoch, endEpoch]);
+		    }
+		    return intervals;
+		}
+
         async function submitForm() {
+            var start_time = document.getElementById('startTime').value,
+            end_time = document.getElementById('endTime').value,
+            num_days = document.getElementById('numDays').value;
+
             const formData = {
                 user_id: userId,
                 access_key: accessKey,
                 mobile_number: mobileNumber,
                 company_name: document.getElementById('companyName').value,
-                start_time: document.getElementById('startTime').value,
-                end_time: document.getElementById('endTime').value,
-                num_days: document.getElementById('numDays').value,
+                allowed_times: generateEpochIntervals(start_time, end_time, num_days)
             };
 
             try {
@@ -173,21 +191,6 @@ const COMMON_HEADERS = {
     "Content-Type": "application/json"
 };
 
-function generateEpochIntervals(startTimeStr, endTimeStr, numDays = 1) {
-    const startTime = new Date(`1970-01-01T${startTimeStr}:00Z`);
-    const endTime = new Date(`1970-01-01T${endTimeStr}:00Z`);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    let intervals = [];
-    for (let i = 0; i < numDays; i++) {
-        const currentDate = new Date(today.getTime() + i * 86400000);
-        const startEpoch = Math.floor(currentDate.getTime() / 1000) + startTime.getTime() / 1000;
-        const endEpoch = Math.floor(currentDate.getTime() / 1000) + endTime.getTime() / 1000;
-        intervals.push([startEpoch, endEpoch]);
-    }
-    return intervals;
-}
 
 async function makeRequest(method, url, headers, jsonData) {
     const response = await fetch(url, {
@@ -296,14 +299,11 @@ async function handlePreApprove(requestBody) {
     try {
         const userId = requestBody.user_id;
         const accessKey = requestBody.access_key;
-
         const mobileNumber = requestBody.mobile_number;
         const companyName = requestBody.company_name;
-        const startTime = requestBody.start_time;
-        const endTime = requestBody.end_time;
-        const numDays = parseInt(requestBody.num_days, 10);
+        const intervals = requestBody.allowed_times;
 
-        if (!userId || !mobileNumber || !companyName || !startTime || !endTime || !accessKey) {
+        if (!userId || !mobileNumber || !companyName || !accessKey) {
             return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
         }
 
@@ -314,7 +314,7 @@ async function handlePreApprove(requestBody) {
             return new Response(JSON.stringify({ error: "flat_id not found in the user info response" }), { status: 400 });
         }
 
-        const intervals = generateEpochIntervals(startTime, endTime, numDays);
+        // const intervals = generateEpochIntervals(startTime, endTime, numDays);
         const responses = [];
         for (const [start, end] of intervals) {
             const response = await sendPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end);
