@@ -23,48 +23,48 @@ const HTML_CONTENT = `<!DOCTYPE html>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-    <div class="bg-white p-8 rounded-lg shadow-md w-96">
-        <h1 class="text-xl font-bold mb-4">Pre-Approve Frequent Deliveries</h1>
-        <p class="text-lg font-medium text-gray-600 mb-4">Avoid Hassle. Save Time.</p>
+    <div class="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
+        <h1 class="text-2xl font-bold text-gray-800 mb-4">Pre-Approve Frequent Deliveries</h1>
+        <p class="text-lg font-medium text-gray-500 mb-6">Avoid Hassle. Save Time.</p>
 
         <!-- Step 1: Mobile Number -->
-        <div id="step1" class="mb-4">
-            <label for="mobileNumber" class="block mb-2">Mobile Number:</label>
-            <input type="tel" id="mobileNumber" class="w-full p-2 border rounded" required>
-            <button onclick="sendOTP()" class="mt-4 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Send OTP</button>
+        <div id="step1" class="mb-6">
+            <label for="mobileNumber" class="block text-sm font-semibold mb-2 text-gray-700">Mobile Number:</label>
+            <input type="tel" id="mobileNumber" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" placeholder="Enter mobile number" required>
+            <button onclick="sendOTP()" class="mt-4 w-full bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 transition">Send OTP</button>
         </div>
 
         <!-- Step 2: OTP -->
-        <div id="step2" class="mb-4 hidden">
-            <label for="otp" class="block mb-2">Enter OTP:</label>
-            <input type="text" id="otp" class="w-full p-2 border rounded" required>
-            <button onclick="verifyOTP()" class="mt-4 bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Verify OTP</button>
+        <div id="step2" class="mb-6 hidden">
+            <label for="otp" class="block text-sm font-semibold mb-2 text-gray-700">Enter OTP:</label>
+            <input type="text" id="otp" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" placeholder="Enter OTP" required>
+            <button onclick="verifyOTP()" class="mt-4 w-full bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 transition">Verify OTP</button>
         </div>
 
         <!-- Step 3: Additional Details -->
         <div id="step3" class="hidden">
-            <label for="companyName" class="block mb-2">Company Name:</label>
-            <input type="text" id="companyName" placeholder="e.g. Amazon" autofocus class="w-full p-2 border rounded mb-4" required>
+            <label for="companyName" class="block text-sm font-semibold mb-2 text-gray-700">Company Name:</label>
+            <input type="text" id="companyName" placeholder="e.g. Amazon" autofocus class="w-full p-3 border rounded-lg mb-6 focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
 
-            <!-- Flex container so that Start and End Time are in the same row-->
-            <div class="flex space-x-4 mb-4">
+            <!-- Flex container for Start and End Time -->
+            <div class="flex space-x-4 mb-6">
                 <div class="flex-1">
-                    <label for="startTime" class="block mb-2">From:</label>
-                    <input type="time" id="startTime" value="08:00" class="w-full p-2 border rounded" required>
+                    <label for="startTime" class="block text-sm font-semibold mb-2 text-gray-700">Start Time:</label>
+                    <input type="time" id="startTime" value="08:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
                 </div>
                 <div class="flex-1">
-                    <label for="endTime" class="block mb-2">To:</label>
-                    <input type="time" id="endTime" value="22:00" class="w-full p-2 border rounded" required>
+                    <label for="endTime" class="block text-sm font-semibold mb-2 text-gray-700">End Time:</label>
+                    <input type="time" id="endTime" value="22:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
                 </div>
             </div>
 
-            <label for="numDays" class="block mb-2">Number of Days:</label>
-            <input type="number" id="numDays" class="w-full p-2 border rounded mb-4" min="1" value="30" required>
+            <label for="numDays" class="block text-sm font-semibold mb-2 text-gray-700">Number of Days:</label>
+            <input type="number" id="numDays" class="w-full p-3 border rounded-lg mb-6 focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" min="1" value="30" required>
 
-            <button onclick="submitForm()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Create Pre-Approvals</button>
+            <button onclick="submitForm()" class="w-full bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 transition">Create Pre-Approvals</button>
         </div>
 
-        <div id="result" class="mt-4 text-sm"></div>
+        <div id="result" class="mt-4 text-sm text-gray-600"></div>
     </div>
 
     <script>
