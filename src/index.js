@@ -61,7 +61,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
             <label for="numDays" class="block text-sm font-semibold mb-2 text-gray-700">Number of Days:</label>
             <input type="number" id="numDays" class="w-full p-3 border rounded-lg mb-6 focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" min="1" value="30" required>
 
-            <button onclick="submitForm()" class="w-full bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 transition">Create Pre-Approvals</button>
+            <button id="submitPreApprovalsBtn" onclick="submitForm()" class="w-full bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 transition">Create Pre-Approvals</button>
         </div>
 
         <div id="result" class="mt-4 text-sm text-gray-600"></div>
@@ -69,6 +69,26 @@ const HTML_CONTENT = `<!DOCTYPE html>
 
     <script>
         var accessKey, userId, mobileNumber;
+
+        // Get all input fields
+        const companyNameInput = document.getElementById('companyName');
+        const startTimeInput = document.getElementById('startTime');
+        const endTimeInput = document.getElementById('endTime');
+        const numDaysInput = document.getElementById('numDays');
+        const submitPreApprovalsBtn = document.getElementById('submitPreApprovalsBtn');
+        const resultDiv = document.getElementById('result');
+
+        // Clear result when any input field is changed
+        function clearResult() {
+            resultDiv.textContent = '';
+        }
+
+        // Add event listeners for all inputs to clear result div
+        companyNameInput.addEventListener('input', clearResult);
+        startTimeInput.addEventListener('input', clearResult);
+        endTimeInput.addEventListener('input', clearResult);
+        numDaysInput.addEventListener('input', clearResult);
+
 
         window.onload = function() {
             accessKey = localStorage.getItem('accessKey');
@@ -150,6 +170,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
 		}
 
         async function submitForm() {
+            submitPreApprovalsBtn.disabled = true;
+
             var start_time = document.getElementById('startTime').value,
             end_time = document.getElementById('endTime').value,
             num_days = document.getElementById('numDays').value;
@@ -169,6 +191,10 @@ const HTML_CONTENT = `<!DOCTYPE html>
                     body: JSON.stringify(formData)
                 });
                 const data = await response.json();
+
+                // Reenable the button once we get a response from the server
+                submitPreApprovalsBtn.disabled = false;
+
                 if (data.success) {
                     document.getElementById('result').textContent = 'Pre-approval successful!';
                 } else {
