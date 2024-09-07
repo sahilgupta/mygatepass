@@ -204,6 +204,15 @@ async function makeRequest(method, url, headers, jsonData) {
     return response.json();
 }
 
+async function createRequest(method, url, headers, jsonData) {
+    return fetch(url, {
+        method: method,
+        headers: headers,
+        body: JSON.stringify(jsonData)
+    });
+}
+
+
 async function readRequestBody(request) {
     const contentType = request.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
@@ -239,7 +248,7 @@ async function getUserInfo(accessKey, userId) {
     return await makeRequest("POST", INFO_URL, headers, payload);
 }
 
-async function sendPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime) {
+async function setupPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime) {
     const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = {
         isMulti: 0,
@@ -252,7 +261,7 @@ async function sendPreapproveRequest(accessKey, userId, flatId, companyName, sta
         startTime: startTime,
         endTime: endTime
     };
-    return await makeRequest("POST", PREAPPROVE_URL, headers, payload);
+    return createRequest("POST", PREAPPROVE_URL, headers, payload);
 }
 
 async function handleSendOtp(requestBody) {
@@ -314,12 +323,13 @@ async function handlePreApprove(requestBody) {
             return new Response(JSON.stringify({ error: "flat_id not found in the user info response" }), { status: 400 });
         }
 
-        // const intervals = generateEpochIntervals(startTime, endTime, numDays);
-        const responses = [];
+        const requests = [];
         for (const [start, end] of intervals) {
-            const response = await sendPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end);
-            responses.push(response);
+            const request = setupPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end);
+            requests.push(request);
         }
+
+        const responses = await Promise.all(requests);
 
         return new Response(JSON.stringify({ success: true, responses: responses }), { status: 200 });
     } catch (error) {
