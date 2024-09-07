@@ -24,8 +24,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
     <div class="bg-white p-8 rounded-lg shadow-md w-96">
-        <h1 class="text-2xl font-bold mb-4">Bypass MyGate</h1>
-        <p class="text-lg font-medium text-gray-600 mb-4">Pre-approve multiple entries. For free!</p>
+        <h1 class="text-xl font-bold mb-4">Pre-Approve Frequent Deliveries</h1>
+        <p class="text-lg font-medium text-gray-600 mb-4">Avoid Hassle. Save Time.</p>
 
         <!-- Step 1: Mobile Number -->
         <div id="step1" class="mb-4">
@@ -44,18 +44,24 @@ const HTML_CONTENT = `<!DOCTYPE html>
         <!-- Step 3: Additional Details -->
         <div id="step3" class="hidden">
             <label for="companyName" class="block mb-2">Company Name:</label>
-            <input type="text" id="companyName" class="w-full p-2 border rounded mb-4" required>
+            <input type="text" id="companyName" placeholder="e.g. Amazon" autofocus class="w-full p-2 border rounded mb-4" required>
 
-            <label for="startTime" class="block mb-2">Start Time:</label>
-            <input type="time" id="startTime" value="08:00" class="w-full p-2 border rounded mb-4" required>
-
-            <label for="endTime" class="block mb-2">End Time:</label>
-            <input type="time" id="endTime" value="22:00" class="w-full p-2 border rounded mb-4" required>
+            <!-- Flex container so that Start and End Time are in the same row-->
+            <div class="flex space-x-4 mb-4">
+                <div class="flex-1">
+                    <label for="startTime" class="block mb-2">From:</label>
+                    <input type="time" id="startTime" value="08:00" class="w-full p-2 border rounded" required>
+                </div>
+                <div class="flex-1">
+                    <label for="endTime" class="block mb-2">To:</label>
+                    <input type="time" id="endTime" value="22:00" class="w-full p-2 border rounded" required>
+                </div>
+            </div>
 
             <label for="numDays" class="block mb-2">Number of Days:</label>
             <input type="number" id="numDays" class="w-full p-2 border rounded mb-4" min="1" value="30" required>
 
-            <button onclick="submitForm()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Submit</button>
+            <button onclick="submitForm()" class="bg-green-500 text-white p-2 rounded hover:bg-green-600">Create Pre-Approvals</button>
         </div>
 
         <div id="result" class="mt-4 text-sm"></div>
