@@ -8,12 +8,6 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-// export default {
-// 	async fetch(request, env, ctx) {
-// 		return new Response('Hello World 2!');
-// 	},
-// };
-
 const HTML_CONTENT = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,6 +85,11 @@ const HTML_CONTENT = `<!DOCTYPE html>
         endTimeInput.addEventListener('input', clearResult);
         numDaysInput.addEventListener('input', clearResult);
 
+        // Function to dynamically get the base path
+        function getBasePath() {
+            const pathname = window.location.pathname;
+            return pathname.includes('/mygatepass') ? '/mygatepass' : '';
+        }
 
         window.onload = function() {
             accessKey = localStorage.getItem('accessKey');
@@ -107,8 +106,9 @@ const HTML_CONTENT = `<!DOCTYPE html>
 
         async function sendOTP() {
             mobileNumber = document.getElementById('mobileNumber').value;
+            const basePath = getBasePath();  // Dynamically determine the base path
             try {
-                const response = await fetch('/send-otp', {
+                const response = await fetch(\`\${basePath}/send-otp\`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mobile_number: mobileNumber })
@@ -128,8 +128,9 @@ const HTML_CONTENT = `<!DOCTYPE html>
         async function verifyOTP() {
             mobileNumber = document.getElementById('mobileNumber').value;
             const otp = document.getElementById('otp').value;
+            const basePath = getBasePath();  // Dynamically determine the base path
             try {
-                const response = await fetch('/verify-otp', {
+                const response = await fetch(\`\${basePath}/verify-otp\`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mobile_number: mobileNumber, otp: otp })
@@ -172,6 +173,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
 		}
 
         async function submitForm() {
+            const basePath = getBasePath();  // Dynamically determine the base path
             submitPreApprovalsBtn.disabled = true;
 
             var start_time = document.getElementById('startTime').value,
@@ -187,14 +189,13 @@ const HTML_CONTENT = `<!DOCTYPE html>
             };
 
             try {
-                const response = await fetch('/pre-approve', {
+                const response = await fetch(\`\${basePath}/pre-approve\`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(formData)
                 });
                 const data = await response.json();
 
-                // Reenable the button once we get a response from the server
                 submitPreApprovalsBtn.disabled = false;
 
                 if (data.success) {
@@ -208,8 +209,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
         }
     </script>
 </body>
-</html>
-`;
+</html>`;
 
 const VALIDATE_URL = "https://app.mygate.in/auth/v2/user/validate";
 const LOGIN_URL = "https://app.mygate.in/auth/v2/login";
@@ -373,6 +373,9 @@ async function handlePreApprove(requestBody) {
 
 async function handleRequest(request) {
     const url = new URL(request.url);
+    const basePath = url.pathname.startsWith('/mygatepass') ? '/mygatepass' : '';
+
+    // Adjusting routes based on the base path
     if (request.method === "GET") {
         return new Response(HTML_CONTENT, {
             headers: { "content-type": "text/html;charset=UTF-8" },
@@ -380,17 +383,18 @@ async function handleRequest(request) {
     } else if (request.method === "POST") {
         const reqBody = await readRequestBody(request);
 
-        if (url.pathname === '/send-otp') {
+        if (url.pathname === `${basePath}/send-otp`) {
             return await handleSendOtp(reqBody);
-        } else if (url.pathname === '/verify-otp') {
+        } else if (url.pathname === `${basePath}/verify-otp`) {
             return await handleVerifyOtp(reqBody);
-        } else if (url.pathname === '/pre-approve') {
+        } else if (url.pathname === `${basePath}/pre-approve`) {
             return await handlePreApprove(reqBody);
         }
     }
 
     return new Response(JSON.stringify({ error: "Invalid endpoint" }), { status: 404 });
 }
+
 
 addEventListener("fetch", (event) => {
     event.respondWith(handleRequest(event.request));
