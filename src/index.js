@@ -156,55 +156,75 @@ const HTML_CONTENT = `<!DOCTYPE html>
             }
         }
 
-		function generateEpochIntervals(startTimeStr, endTimeStr, numDays = 1) {
-		    const startTime = new Date(\`1970-01-01T\${startTimeStr}:00Z\`);
-		    const endTime = new Date(\`1970-01-01T\${endTimeStr}:00Z\`);
-		    const today = new Date();
-		    today.setHours(0, 0, 0, 0);
+        function generateEpochIntervals(startTimeStr, endTimeStr, numDays = 1) {
+            const startTime = new Date(\`1970-01-01T\${startTimeStr}:00Z\`);
+            const endTime = new Date(\`1970-01-01T\${endTimeStr}:00Z\`);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
 
-		    let intervals = [];
-		    for (let i = 0; i < numDays; i++) {
-		        const currentDate = new Date(today.getTime() + i * 86400000);
-		        const startEpoch = Math.floor(currentDate.getTime() / 1000) + startTime.getTime() / 1000;
-		        const endEpoch = Math.floor(currentDate.getTime() / 1000) + endTime.getTime() / 1000;
-		        intervals.push([startEpoch, endEpoch]);
-		    }
-		    return intervals;
-		}
+            let intervals = [];
+            for (let i = 0; i < numDays; i++) {
+                const currentDate = new Date(today.getTime() + i * 86400000);
+                const startEpoch = Math.floor(currentDate.getTime() / 1000) + startTime.getTime() / 1000;
+                const endEpoch = Math.floor(currentDate.getTime() / 1000) + endTime.getTime() / 1000;
+                intervals.push([startEpoch, endEpoch]);
+            }
+            return intervals;
+        }
+
+        async function submitBatchRequest(formData, intervals) {
+            const basePath = getBasePath();
+            formData.allowed_times = intervals;
+            
+            const response = await fetch(\`\${basePath}/pre-approve\`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            
+            return response.json();
+        }
 
         async function submitForm() {
-            const basePath = getBasePath();  // Dynamically determine the base path
+            const basePath = getBasePath();
             submitPreApprovalsBtn.disabled = true;
+            resultDiv.textContent = 'Processing...';
 
             var start_time = document.getElementById('startTime').value,
             end_time = document.getElementById('endTime').value,
-            num_days = document.getElementById('numDays').value;
+            num_days = parseInt(document.getElementById('numDays').value);
 
             const formData = {
                 user_id: userId,
                 access_key: accessKey,
                 mobile_number: mobileNumber,
-                company_name: document.getElementById('companyName').value,
-                allowed_times: generateEpochIntervals(start_time, end_time, num_days)
+                company_name: document.getElementById('companyName').value
             };
 
-            try {
-                const response = await fetch(\`\${basePath}/pre-approve\`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(formData)
-                });
-                const data = await response.json();
+            const allIntervals = generateEpochIntervals(start_time, end_time, num_days);
+            const batchSize = 45;
+            const batches = [];
 
+            for (let i = 0; i < allIntervals.length; i += batchSize) {
+                batches.push(allIntervals.slice(i, i + batchSize));
+            }
+
+            try {
+                const results = await Promise.all(batches.map(batch => submitBatchRequest({...formData}, batch)));
+                
+                const allSuccessful = results.every(result => result.success);
+                
                 submitPreApprovalsBtn.disabled = false;
 
-                if (data.success) {
-                    document.getElementById('result').textContent = 'Pre-approval successful!';
+                if (allSuccessful) {
+                    resultDiv.textContent = 'Pre-approvals created successfully!';
                 } else {
-                    document.getElementById('result').textContent = data.error;
+                    const errors = results.filter(result => !result.success).map(result => result.error).join(', ');
+                    resultDiv.textContent = \`Some pre-approvals failed. Errors: \${errors}\`;
                 }
             } catch (error) {
-                document.getElementById('result').textContent = 'Error submitting form';
+                submitPreApprovalsBtn.disabled = false;
+                resultDiv.textContent = 'Error submitting form: ' + error.message;
             }
         }
     </script>
