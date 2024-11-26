@@ -67,6 +67,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
         var accessKey, userId, mobileNumber;
 
         // Get all input fields
+        const mobileNumberInput = document.getElementById('mobileNumber');
+        const otpInput = document.getElementById('otp');
         const companyNameInput = document.getElementById('companyName');
         const startTimeInput = document.getElementById('startTime');
         const endTimeInput = document.getElementById('endTime');
@@ -92,6 +94,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
         }
 
         window.onload = function() {
+            mobileNumberInput.focus();
             accessKey = localStorage.getItem('accessKey');
             mobileNumber = localStorage.getItem('mobileNumber');
             userId = localStorage.getItem('userId');
@@ -101,11 +104,12 @@ const HTML_CONTENT = `<!DOCTYPE html>
                 document.getElementById('step1').classList.add('hidden');
                 document.getElementById('step2').classList.add('hidden');
                 document.getElementById('step3').classList.remove('hidden');
+                companyNameInput.focus(); // Focus on Company Name input field
             }
         };
 
         async function sendOTP() {
-            mobileNumber = document.getElementById('mobileNumber').value;
+            mobileNumber = mobileNumberInput.value;
             const basePath = getBasePath();  // Dynamically determine the base path
             try {
                 const response = await fetch(\`\${basePath}/send-otp\`, {
@@ -117,6 +121,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
                 if (data.success) {
                     document.getElementById('step1').classList.add('hidden');
                     document.getElementById('step2').classList.remove('hidden');
+                    otpInput.focus(); // Focus on OTP input field
                 } else {
                     document.getElementById('result').textContent = data.error;
                 }
@@ -126,8 +131,8 @@ const HTML_CONTENT = `<!DOCTYPE html>
         }
 
         async function verifyOTP() {
-            mobileNumber = document.getElementById('mobileNumber').value;
-            const otp = document.getElementById('otp').value;
+            mobileNumber = mobileNumberInput.value;
+            const otp = otpInput.value;
             const basePath = getBasePath();  // Dynamically determine the base path
             try {
                 const response = await fetch(\`\${basePath}/verify-otp\`, {
@@ -148,6 +153,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
 
                     document.getElementById('step2').classList.add('hidden');
                     document.getElementById('step3').classList.remove('hidden');
+                    companyNameInput.focus(); // Focus on Company Name input field
                 } else {
                     document.getElementById('result').textContent = data.error;
                 }
@@ -175,13 +181,13 @@ const HTML_CONTENT = `<!DOCTYPE html>
         async function submitBatchRequest(formData, intervals) {
             const basePath = getBasePath();
             formData.allowed_times = intervals;
-            
+
             const response = await fetch(\`\${basePath}/pre-approve\`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)
             });
-            
+
             return response.json();
         }
 
@@ -190,15 +196,15 @@ const HTML_CONTENT = `<!DOCTYPE html>
             submitPreApprovalsBtn.disabled = true;
             resultDiv.textContent = 'Processing...';
 
-            var start_time = document.getElementById('startTime').value,
-            end_time = document.getElementById('endTime').value,
-            num_days = parseInt(document.getElementById('numDays').value);
+            var start_time = startTimeInput.value,
+            end_time = endTimeInput.value,
+            num_days = parseInt(numDaysInput.value);
 
             const formData = {
                 user_id: userId,
                 access_key: accessKey,
                 mobile_number: mobileNumber,
-                company_name: document.getElementById('companyName').value
+                company_name: companyNameInput.value
             };
 
             const allIntervals = generateEpochIntervals(start_time, end_time, num_days);
@@ -211,9 +217,9 @@ const HTML_CONTENT = `<!DOCTYPE html>
 
             try {
                 const results = await Promise.all(batches.map(batch => submitBatchRequest({...formData}, batch)));
-                
+
                 const allSuccessful = results.every(result => result.success);
-                
+
                 submitPreApprovalsBtn.disabled = false;
 
                 if (allSuccessful) {
@@ -227,6 +233,22 @@ const HTML_CONTENT = `<!DOCTYPE html>
                 resultDiv.textContent = 'Error submitting form: ' + error.message;
             }
         }
+
+        // Function to handle Enter key press for form submission
+        function handleEnterKeyPress(event, callback) {
+            if (event.key === 'Enter') {
+                event.preventDefault(); // Prevent form from submitting normally
+                callback();
+            }
+        }
+
+        // Attach the event listeners for Enter key press
+        mobileNumberInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, sendOTP));
+        otpInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, verifyOTP));
+        companyNameInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, submitForm));
+        startTimeInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, submitForm));
+        endTimeInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, submitForm));
+        numDaysInput.addEventListener('keypress', (event) => handleEnterKeyPress(event, submitForm));
     </script>
 </body>
 </html>`;
@@ -244,7 +266,6 @@ const COMMON_HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
     "Content-Type": "application/json"
 };
-
 
 async function makeRequest(method, url, headers, jsonData) {
     const response = await fetch(url, {
@@ -265,7 +286,6 @@ async function createRequest(method, url, headers, jsonData) {
         body: JSON.stringify(jsonData)
     });
 }
-
 
 async function readRequestBody(request) {
     const contentType = request.headers.get('content-type') || '';
@@ -351,8 +371,11 @@ async function handleVerifyOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Invalid OTP" }), { status: 400 });
         }
 
-        return new Response(JSON.stringify({ success: true, message: "OTP verified successfully",
-        		data: {"mobile_number": mobileNumber, "access_key": accessKey, "user_id": userId}}), { status: 200 });
+        return new Response(JSON.stringify({
+            success: true,
+            message: "OTP verified successfully",
+            data: { "mobile_number": mobileNumber, "access_key": accessKey, "user_id": userId }
+        }), { status: 200 });
     } catch (error) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
     }
@@ -414,7 +437,6 @@ async function handleRequest(request) {
 
     return new Response(JSON.stringify({ error: "Invalid endpoint" }), { status: 404 });
 }
-
 
 addEventListener("fetch", (event) => {
     event.respondWith(handleRequest(event.request));
