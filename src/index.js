@@ -16,12 +16,15 @@ const HTML_CONTENT = `<!DOCTYPE html>
     <title>MyGatePass: Pre-Approve Frequent MyGate Deliveries. Instantly.</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
     <div class="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
         <h1 class="text-4xl text-center font-bold mb-4">
             <span class="text-blue-600">My</span><span class="text-green-600">Gate</span><span class="text-gray-800">Pass</span>
         </h1>
-        <p class="text-md font-medium text-center text-gray-500 mb-6">Pre-Approve Frequent Deliveries. Instantly.</p>
+        <p class="text-lg font-medium text-center text-gray-700 mb-2">Pre-Approve Frequent Deliveries. Instantly.</p>
+        <div class="mb-8 text-center">
+            <p class="text-gray-600 mb-4">Tired of manually approving regular deliveries? MyGatePass lets you pre-approve trusted delivery partners for specific time slots.</p>
+        </div>
 
         <!-- Step 1: Mobile Number -->
         <div id="step1" class="mb-6">
