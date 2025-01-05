@@ -58,7 +58,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
             </div>
 
             <label for="numDays" class="block text-sm font-semibold mb-2 text-gray-700">Number of Days:</label>
-            <input type="number" id="numDays" class="w-full p-3 border rounded-lg mb-6 focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" min="1" value="30" required>
+            <input type="number" id="numDays" class="w-full p-3 border rounded-lg mb-6 focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" min="1" value="365" required>
 
             <button id="submitPreApprovalsBtn" onclick="submitForm()" class="w-full bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 transition">Create Pre-Approvals</button>
         </div>
