@@ -49,11 +49,11 @@ const HTML_CONTENT = `<!DOCTYPE html>
             <div class="flex space-x-4 mb-6">
                 <div class="flex-1">
                     <label for="startTime" class="block text-sm font-semibold mb-2 text-gray-700">Start Time:</label>
-                    <input type="time" id="startTime" value="08:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
+                    <input type="time" id="startTime" value="07:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
                 </div>
                 <div class="flex-1">
                     <label for="endTime" class="block text-sm font-semibold mb-2 text-gray-700">End Time:</label>
-                    <input type="time" id="endTime" value="22:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
+                    <input type="time" id="endTime" value="23:00" class="w-full p-3 border rounded-lg focus:border-blue-500 focus:ring focus:ring-blue-200 outline-none transition" required>
                 </div>
             </div>
 
