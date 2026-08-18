@@ -72,7 +72,7 @@ function preApproveBody(numIntervals) {
 
 beforeEach(() => {
 	// Keep the retry/backoff behaviour but make the waits negligible in tests.
-	Object.assign(TUNING, DEFAULT_TUNING, { spacingMs: 0, baseBackoffMs: 1, maxBackoffMs: 2, jitterMs: 0 });
+	Object.assign(TUNING, DEFAULT_TUNING, { baseBackoffMs: 1, maxBackoffMs: 2, jitterMs: 0 });
 });
 
 afterEach(() => {
@@ -183,6 +183,43 @@ describe('pre-approve', () => {
 		expect(stub.calls.length).toBeLessThanOrEqual(12);
 		expect(data.success).toBe(false);
 		expect(data.failed).toBe(10);
+	});
+
+	it('gives up within the deadline the page asked for', async () => {
+		Object.assign(TUNING, { minRequestBudgetMs: 50, baseBackoffMs: 300, maxBackoffMs: 300, jitterMs: 0 });
+		stubFetch(async (call) => {
+			if (call.url.includes('/user/v3/info')) {
+				return jsonResponse({ activeflat: 'flat-1' });
+			}
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			return jsonResponse({ error: 'rate limited' }, { status: 429 });
+		});
+
+		const startedAt = Date.now();
+		const response = await post('/pre-approve', { ...preApproveBody(40), deadline_ms: 800 });
+		const elapsed = Date.now() - startedAt;
+		const data = await response.json();
+
+		expect(elapsed).toBeLessThan(1500);
+		expect(response.status).toBe(429);
+		expect(data.failed).toBe(40);
+		expect(data.error).toBeTruthy();
+	});
+
+	it('caps the deadline at the Worker maximum however large the page asks for', async () => {
+		Object.assign(TUNING, { deadlineMs: 300, minRequestBudgetMs: 50, baseBackoffMs: 200, maxBackoffMs: 200, jitterMs: 0 });
+		stubFetch(async (call) => {
+			if (call.url.includes('/user/v3/info')) {
+				return jsonResponse({ activeflat: 'flat-1' });
+			}
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			return jsonResponse({ error: 'rate limited' }, { status: 429 });
+		});
+
+		const startedAt = Date.now();
+		await post('/pre-approve', { ...preApproveBody(40), deadline_ms: 120000 });
+
+		expect(Date.now() - startedAt).toBeLessThan(1500);
 	});
 
 	it('surfaces a rate limited user-info lookup as a 429', async () => {

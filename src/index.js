@@ -181,17 +181,15 @@ const HTML_CONTENT = `<!DOCTYPE html>
             return intervals;
         }
 
-        // MyGate (behind Cloudflare) throttles bursts of pre-approval calls and
-        // answers with HTTP 429 / Cloudflare error 1015. Requests are therefore
-        // sent in small batches, one batch at a time, with a pause in between.
-        const BATCH_SIZE = 30;             // keeps a Worker invocation inside its subrequest budget
-        const BATCH_PAUSE_MS = 400;        // breathing room between batches
-        const RATE_LIMIT_PAUSE_MS = 5000;  // longer pause once MyGate starts rate limiting
-        const MAX_PASSES = 3;              // extra passes over the intervals that failed
-
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
+        // MyGate (behind Cloudflare) answers bursts of pre-approval calls with
+        // HTTP 429 / Cloudflare error 1015, so each Worker invocation paces and
+        // retries the calls of its batch. The batches themselves are sent
+        // together, and every request carries the time budget it may use, so a
+        // whole run stays inside TOTAL_DEADLINE_MS.
+        const BATCH_SIZE = 35;              // keeps a Worker invocation inside its subrequest budget
+        const TOTAL_DEADLINE_MS = 9000;     // upper bound on how long a run may take
+        const NETWORK_RESERVE_MS = 500;     // allowance for the round trip to the Worker
+        const MIN_RETRY_BUDGET_MS = 1500;   // skip the retry pass below this much remaining budget
 
         function chunk(items, size) {
             const chunks = [];
@@ -201,9 +199,10 @@ const HTML_CONTENT = `<!DOCTYPE html>
             return chunks;
         }
 
-        async function submitBatchRequest(formData, intervals) {
+        async function submitBatchRequest(formData, intervals, deadlineMs) {
             const basePath = getBasePath();
             formData.allowed_times = intervals;
+            formData.deadline_ms = deadlineMs;
 
             try {
                 const response = await fetch(\`\${basePath}/pre-approve\`, {
@@ -217,43 +216,48 @@ const HTML_CONTENT = `<!DOCTYPE html>
             }
         }
 
-        async function createPreApprovals(formData, intervals, onProgress) {
-            let pending = intervals;
-            let created = 0;
+        // Sends every batch of the given intervals in parallel and collects what failed.
+        async function runPass(formData, intervals, deadlineMs, onBatchDone) {
+            const batches = chunk(intervals, BATCH_SIZE);
+            const outcomes = await Promise.all(batches.map(async (batch) => {
+                const result = await submitBatchRequest({ ...formData }, batch, deadlineMs);
+                onBatchDone(result);
+                return { result: result, batch: batch };
+            }));
+
+            const failed = [];
             const errors = new Set();
-
-            for (let pass = 1; pass <= MAX_PASSES && pending.length > 0; pass++) {
-                const failed = [];
-                let rateLimited = false;
-
-                for (const batch of chunk(pending, BATCH_SIZE)) {
-                    const result = await submitBatchRequest({ ...formData }, batch);
-
-                    created += result.created || 0;
-                    if (Array.isArray(result.failed_intervals)) {
-                        failed.push(...result.failed_intervals);
-                    } else if (!result.success) {
-                        failed.push(...batch);
-                    }
-                    if (result.error) {
-                        errors.add(result.error);
-                    }
-                    if (result.rate_limited) {
-                        rateLimited = true;
-                    }
-
-                    onProgress(created, intervals.length);
-                    await sleep(result.rate_limited ? RATE_LIMIT_PAUSE_MS : BATCH_PAUSE_MS);
+            for (const { result, batch } of outcomes) {
+                if (Array.isArray(result.failed_intervals)) {
+                    failed.push(...result.failed_intervals);
+                } else if (!result.success) {
+                    failed.push(...batch);
                 }
-
-                pending = failed;
-                if (pending.length > 0 && pass < MAX_PASSES) {
-                    // Give the rate limiter time to reset before retrying what failed.
-                    await sleep(rateLimited ? RATE_LIMIT_PAUSE_MS * pass : BATCH_PAUSE_MS * pass);
+                if (result.error) {
+                    errors.add(result.error);
                 }
             }
+            return { failed: failed, errors: [...errors] };
+        }
 
-            return { created: created, failed: pending, errors: [...errors] };
+        async function createPreApprovals(formData, intervals, onProgress) {
+            const startedAt = Date.now();
+            const budgetLeft = () => TOTAL_DEADLINE_MS - (Date.now() - startedAt) - NETWORK_RESERVE_MS;
+
+            let created = 0;
+            const onBatchDone = (result) => {
+                created += result.created || 0;
+                onProgress(created, intervals.length);
+            };
+
+            let { failed, errors } = await runPass(formData, intervals, budgetLeft(), onBatchDone);
+
+            // One retry pass for whatever got throttled, if the budget allows it.
+            if (failed.length > 0 && budgetLeft() >= MIN_RETRY_BUDGET_MS) {
+                ({ failed, errors } = await runPass(formData, failed, budgetLeft(), onBatchDone));
+            }
+
+            return { created: created, failed: failed, errors: errors };
         }
 
         async function submitForm() {
@@ -282,7 +286,7 @@ const HTML_CONTENT = `<!DOCTYPE html>
                     resultDiv.textContent = \`Pre-approvals created successfully for \${created} day(s)!\`;
                 } else {
                     const details = errors.length ? \` (\${errors.join('; ')})\` : '';
-                    resultDiv.textContent = \`Created \${created} of \${allIntervals.length} pre-approvals. \${failed.length} could not be created\${details}. Wait a few minutes before trying again; days that already succeeded may get a duplicate pass.\`;
+                    resultDiv.textContent = \`Created \${created} of \${allIntervals.length} pre-approvals. \${failed.length} could not be created\${details}. Try again for the remaining days, or use a smaller number of days; days that already succeeded may get a duplicate pass.\`;
                 }
             } catch (error) {
                 resultDiv.textContent = 'Error submitting form: ' + error.message;
@@ -325,22 +329,25 @@ const COMMON_HEADERS = {
 };
 
 // MyGate sits behind Cloudflare and answers bursts of requests with HTTP 429
-// (Cloudflare error 1015). Pre-approvals are therefore sent a few at a time,
-// spaced out, and retried with an exponential backoff. Exported so tests can
-// dial the timings down.
+// (Cloudflare error 1015). Pre-approvals are therefore capped at a few calls in
+// flight and retried with an exponential backoff, all of it bounded by a
+// deadline so a run never drags on. Exported so tests can dial it down.
 export const TUNING = {
     // A Worker invocation may make at most 50 subrequests on the free plan,
     // and retries count against that budget too.
     maxSubrequests: 50,
-    // How many pre-approval calls may be in flight at once.
-    concurrency: 3,
-    // Minimum gap between two pre-approval calls started by the same slot.
-    spacingMs: 150,
+    // How many pre-approval calls may be in flight at once, per invocation.
+    concurrency: 4,
+    // Longest an invocation may spend on MyGate, retries included. The page
+    // sends a smaller budget when it has already used part of its own.
+    deadlineMs: 8000,
+    // A request is only started when at least this much of the budget is left.
+    minRequestBudgetMs: 400,
     // Attempts per request, first attempt included.
-    maxAttempts: 4,
-    baseBackoffMs: 500,
-    maxBackoffMs: 8000,
-    jitterMs: 250
+    maxAttempts: 3,
+    baseBackoffMs: 250,
+    maxBackoffMs: 1500,
+    jitterMs: 150
 };
 
 const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
@@ -349,7 +356,18 @@ function sleep(ms) {
     return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-// Tracks how many subrequests this invocation may still make.
+// Tracks how many subrequests this invocation may still make, and how long it
+// may keep trying.
+function createCallContext(deadlineMs = TUNING.deadlineMs) {
+    return {
+        budget: createSubrequestBudget(),
+        deadlineAt: Date.now() + deadlineMs,
+        get timeLeft() {
+            return this.deadlineAt - Date.now();
+        }
+    };
+}
+
 function createSubrequestBudget(limit = TUNING.maxSubrequests) {
     let remaining = limit;
     return {
@@ -401,6 +419,15 @@ function describeFailure(status) {
     return `MyGate responded with HTTP ${status}.`;
 }
 
+// The page tells the Worker how much of its own time budget is left.
+function clampDeadline(deadlineMs) {
+    const requested = Number(deadlineMs);
+    if (!Number.isFinite(requested)) {
+        return TUNING.deadlineMs;
+    }
+    return Math.min(Math.max(requested, TUNING.minRequestBudgetMs), TUNING.deadlineMs);
+}
+
 function parseJson(body) {
     try {
         return JSON.parse(body);
@@ -411,10 +438,11 @@ function parseJson(body) {
 
 /**
  * Performs a request against MyGate, retrying rate limited and transient
- * failures with an exponential backoff. Never throws: the outcome is reported
- * as `{ ok, status, body, attempts, error }`.
+ * failures with an exponential backoff until the subrequest budget or the
+ * deadline runs out. Never throws: the outcome is reported as
+ * `{ ok, status, body, attempts, error }`.
  */
-async function requestWithRetry(method, url, headers, jsonData, budget) {
+async function requestWithRetry(method, url, headers, jsonData, context) {
     const body = JSON.stringify(jsonData);
     let attempt = 0;
     let status = 0;
@@ -422,17 +450,11 @@ async function requestWithRetry(method, url, headers, jsonData, budget) {
     let retryAfterHeader = null;
 
     while (attempt < TUNING.maxAttempts) {
-        if (!budget.take()) {
-            return {
-                ok: false,
-                status: status,
-                body: responseBody,
-                attempts: attempt,
-                budgetExhausted: true,
-                error: attempt === 0
-                    ? "Too many requests in a single call, please retry."
-                    : describeFailure(status)
-            };
+        if (context.timeLeft < TUNING.minRequestBudgetMs) {
+            return giveUp(attempt, status, responseBody, "Ran out of time before MyGate answered. Please try again.");
+        }
+        if (!context.budget.take()) {
+            return giveUp(attempt, status, responseBody, "Too many requests in a single call, please retry.");
         }
         attempt += 1;
 
@@ -453,10 +475,15 @@ async function requestWithRetry(method, url, headers, jsonData, budget) {
             retryAfterHeader = null;
         }
 
-        if (attempt >= TUNING.maxAttempts || budget.remaining <= 0) {
+        if (attempt >= TUNING.maxAttempts || context.budget.remaining <= 0) {
             break;
         }
-        await sleep(backoffDelay(attempt, retryAfterHeader));
+        // Only wait out the backoff when there is still time to use the retry.
+        const delay = backoffDelay(attempt, retryAfterHeader);
+        if (delay + TUNING.minRequestBudgetMs > context.timeLeft) {
+            break;
+        }
+        await sleep(delay);
     }
 
     return {
@@ -468,25 +495,29 @@ async function requestWithRetry(method, url, headers, jsonData, budget) {
     };
 }
 
+function giveUp(attempt, status, body, messageWhenUntried) {
+    return {
+        ok: false,
+        status: status,
+        body: body,
+        attempts: attempt,
+        error: attempt === 0 ? messageWhenUntried : describeFailure(status)
+    };
+}
+
 /**
- * Runs `task` over `items` with at most `TUNING.concurrency` calls in flight,
- * leaving `TUNING.spacingMs` between the calls started by a slot.
+ * Runs `task` over `items` with at most `TUNING.concurrency` calls in flight.
  */
 async function mapWithConcurrency(items, task) {
     const results = new Array(items.length);
     let next = 0;
 
-    async function runSlot(slot) {
-        // Stagger the slots so a batch does not start as one burst.
-        await sleep(Math.floor((TUNING.spacingMs / TUNING.concurrency) * slot));
+    async function runSlot() {
         while (true) {
             const index = next;
             next += 1;
             if (index >= items.length) {
                 return;
-            }
-            if (index >= TUNING.concurrency) {
-                await sleep(TUNING.spacingMs);
             }
             results[index] = await task(items[index], index);
         }
@@ -494,14 +525,14 @@ async function mapWithConcurrency(items, task) {
 
     const slots = [];
     for (let slot = 0; slot < Math.min(TUNING.concurrency, items.length); slot++) {
-        slots.push(runSlot(slot));
+        slots.push(runSlot());
     }
     await Promise.all(slots);
     return results;
 }
 
-async function makeRequest(method, url, headers, jsonData, budget) {
-    const result = await requestWithRetry(method, url, headers, jsonData, budget);
+async function makeRequest(method, url, headers, jsonData, context) {
+    const result = await requestWithRetry(method, url, headers, jsonData, context);
     if (!result.ok) {
         const error = new Error(result.error);
         error.status = result.status;
@@ -518,16 +549,16 @@ async function readRequestBody(request) {
     return request.text();
 }
 
-async function validateUser(mobileNumber, budget) {
+async function validateUser(mobileNumber, context) {
     const payload = {
         uname: mobileNumber,
         devicetype: "O",
         country_code: "91"
     };
-    return await makeRequest("POST", VALIDATE_URL, COMMON_HEADERS, payload, budget);
+    return await makeRequest("POST", VALIDATE_URL, COMMON_HEADERS, payload, context);
 }
 
-async function loginWithOtp(mobileNumber, otp, budget) {
+async function loginWithOtp(mobileNumber, otp, context) {
     const payload = {
         username: mobileNumber,
         country_code: "91",
@@ -536,16 +567,16 @@ async function loginWithOtp(mobileNumber, otp, budget) {
         version: "3",
         type: "O"
     };
-    return await makeRequest("POST", LOGIN_URL, COMMON_HEADERS, payload, budget);
+    return await makeRequest("POST", LOGIN_URL, COMMON_HEADERS, payload, context);
 }
 
-async function getUserInfo(accessKey, userId, budget) {
+async function getUserInfo(accessKey, userId, context) {
     const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = { userid: userId };
-    return await makeRequest("POST", INFO_URL, headers, payload, budget);
+    return await makeRequest("POST", INFO_URL, headers, payload, context);
 }
 
-async function setupPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime, budget) {
+async function setupPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime, context) {
     const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = {
         isMulti: 0,
@@ -558,7 +589,7 @@ async function setupPreapproveRequest(accessKey, userId, flatId, companyName, st
         startTime: startTime,
         endTime: endTime
     };
-    return requestWithRetry("POST", PREAPPROVE_URL, headers, payload, budget);
+    return requestWithRetry("POST", PREAPPROVE_URL, headers, payload, context);
 }
 
 function errorResponse(error, fallbackStatus = 500) {
@@ -578,7 +609,7 @@ async function handleSendOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Missing mobile number" }), { status: 400 });
         }
 
-        await validateUser(mobileNumber, createSubrequestBudget());
+        await validateUser(mobileNumber, createCallContext());
 
         return new Response(JSON.stringify({ success: true, message: "OTP sent successfully" }), { status: 200 });
     } catch (error) {
@@ -595,7 +626,7 @@ async function handleVerifyOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Missing mobile number or OTP" }), { status: 400 });
         }
 
-        const loginData = await loginWithOtp(mobileNumber, otp, createSubrequestBudget());
+        const loginData = await loginWithOtp(mobileNumber, otp, createCallContext());
         const accessKey = loginData.api_key;
         const userId = loginData.userid;
 
@@ -625,8 +656,8 @@ async function handlePreApprove(requestBody) {
             return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
         }
 
-        const budget = createSubrequestBudget();
-        const userData = await getUserInfo(accessKey, userId, budget);
+        const context = createCallContext(clampDeadline(requestBody.deadline_ms));
+        const userData = await getUserInfo(accessKey, userId, context);
         const flatId = userData.activeflat;
 
         if (!flatId) {
@@ -634,7 +665,7 @@ async function handlePreApprove(requestBody) {
         }
 
         const results = await mapWithConcurrency(intervals, async ([start, end]) => {
-            const result = await setupPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end, budget);
+            const result = await setupPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end, context);
             return { start: start, end: end, ...result };
         });
 
