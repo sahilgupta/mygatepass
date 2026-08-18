@@ -181,21 +181,82 @@ const HTML_CONTENT = `<!DOCTYPE html>
             return intervals;
         }
 
+        // MyGate (behind Cloudflare) throttles bursts of pre-approval calls and
+        // answers with HTTP 429 / Cloudflare error 1015. Requests are therefore
+        // sent in small batches, one batch at a time, with a pause in between.
+        const BATCH_SIZE = 30;             // keeps a Worker invocation inside its subrequest budget
+        const BATCH_PAUSE_MS = 400;        // breathing room between batches
+        const RATE_LIMIT_PAUSE_MS = 5000;  // longer pause once MyGate starts rate limiting
+        const MAX_PASSES = 3;              // extra passes over the intervals that failed
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function chunk(items, size) {
+            const chunks = [];
+            for (let i = 0; i < items.length; i += size) {
+                chunks.push(items.slice(i, i + size));
+            }
+            return chunks;
+        }
+
         async function submitBatchRequest(formData, intervals) {
             const basePath = getBasePath();
             formData.allowed_times = intervals;
 
-            const response = await fetch(\`\${basePath}/pre-approve\`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
-            });
+            try {
+                const response = await fetch(\`\${basePath}/pre-approve\`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                return await response.json();
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        }
 
-            return response.json();
+        async function createPreApprovals(formData, intervals, onProgress) {
+            let pending = intervals;
+            let created = 0;
+            const errors = new Set();
+
+            for (let pass = 1; pass <= MAX_PASSES && pending.length > 0; pass++) {
+                const failed = [];
+                let rateLimited = false;
+
+                for (const batch of chunk(pending, BATCH_SIZE)) {
+                    const result = await submitBatchRequest({ ...formData }, batch);
+
+                    created += result.created || 0;
+                    if (Array.isArray(result.failed_intervals)) {
+                        failed.push(...result.failed_intervals);
+                    } else if (!result.success) {
+                        failed.push(...batch);
+                    }
+                    if (result.error) {
+                        errors.add(result.error);
+                    }
+                    if (result.rate_limited) {
+                        rateLimited = true;
+                    }
+
+                    onProgress(created, intervals.length);
+                    await sleep(result.rate_limited ? RATE_LIMIT_PAUSE_MS : BATCH_PAUSE_MS);
+                }
+
+                pending = failed;
+                if (pending.length > 0 && pass < MAX_PASSES) {
+                    // Give the rate limiter time to reset before retrying what failed.
+                    await sleep(rateLimited ? RATE_LIMIT_PAUSE_MS * pass : BATCH_PAUSE_MS * pass);
+                }
+            }
+
+            return { created: created, failed: pending, errors: [...errors] };
         }
 
         async function submitForm() {
-            const basePath = getBasePath();
             submitPreApprovalsBtn.disabled = true;
             resultDiv.textContent = 'Processing...';
 
@@ -211,29 +272,22 @@ const HTML_CONTENT = `<!DOCTYPE html>
             };
 
             const allIntervals = generateEpochIntervals(start_time, end_time, num_days);
-            const batchSize = 45;
-            const batches = [];
-
-            for (let i = 0; i < allIntervals.length; i += batchSize) {
-                batches.push(allIntervals.slice(i, i + batchSize));
-            }
 
             try {
-                const results = await Promise.all(batches.map(batch => submitBatchRequest({...formData}, batch)));
+                const { created, failed, errors } = await createPreApprovals(formData, allIntervals, (done, total) => {
+                    resultDiv.textContent = \`Creating pre-approvals... \${done}/\${total}\`;
+                });
 
-                const allSuccessful = results.every(result => result.success);
-
-                submitPreApprovalsBtn.disabled = false;
-
-                if (allSuccessful) {
-                    resultDiv.textContent = 'Pre-approvals created successfully!';
+                if (failed.length === 0) {
+                    resultDiv.textContent = \`Pre-approvals created successfully for \${created} day(s)!\`;
                 } else {
-                    const errors = results.filter(result => !result.success).map(result => result.error).join(', ');
-                    resultDiv.textContent = \`Some pre-approvals failed. Errors: \${errors}\`;
+                    const details = errors.length ? \` (\${errors.join('; ')})\` : '';
+                    resultDiv.textContent = \`Created \${created} of \${allIntervals.length} pre-approvals. \${failed.length} could not be created\${details}. Wait a few minutes before trying again; days that already succeeded may get a duplicate pass.\`;
                 }
             } catch (error) {
-                submitPreApprovalsBtn.disabled = false;
                 resultDiv.textContent = 'Error submitting form: ' + error.message;
+            } finally {
+                submitPreApprovalsBtn.disabled = false;
             }
         }
 
@@ -270,24 +324,190 @@ const COMMON_HEADERS = {
     "Content-Type": "application/json"
 };
 
-async function makeRequest(method, url, headers, jsonData) {
-    const response = await fetch(url, {
-        method: method,
-        headers: headers,
-        body: JSON.stringify(jsonData)
-    });
-    if (!response.ok) {
-        throw new Error(`Request to ${url} failed with status ${response.status}`);
-    }
-    return response.json();
+// MyGate sits behind Cloudflare and answers bursts of requests with HTTP 429
+// (Cloudflare error 1015). Pre-approvals are therefore sent a few at a time,
+// spaced out, and retried with an exponential backoff. Exported so tests can
+// dial the timings down.
+export const TUNING = {
+    // A Worker invocation may make at most 50 subrequests on the free plan,
+    // and retries count against that budget too.
+    maxSubrequests: 50,
+    // How many pre-approval calls may be in flight at once.
+    concurrency: 3,
+    // Minimum gap between two pre-approval calls started by the same slot.
+    spacingMs: 150,
+    // Attempts per request, first attempt included.
+    maxAttempts: 4,
+    baseBackoffMs: 500,
+    maxBackoffMs: 8000,
+    jitterMs: 250
+};
+
+const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+
+function sleep(ms) {
+    return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-async function createRequest(method, url, headers, jsonData) {
-    return fetch(url, {
-        method: method,
-        headers: headers,
-        body: JSON.stringify(jsonData)
-    });
+// Tracks how many subrequests this invocation may still make.
+function createSubrequestBudget(limit = TUNING.maxSubrequests) {
+    let remaining = limit;
+    return {
+        get remaining() {
+            return remaining;
+        },
+        take() {
+            if (remaining <= 0) {
+                return false;
+            }
+            remaining -= 1;
+            return true;
+        }
+    };
+}
+
+function parseRetryAfter(value) {
+    if (!value) {
+        return null;
+    }
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) {
+        return Math.max(0, seconds * 1000);
+    }
+    const timestamp = Date.parse(value);
+    if (!Number.isNaN(timestamp)) {
+        return Math.max(0, timestamp - Date.now());
+    }
+    return null;
+}
+
+function backoffDelay(attempt, retryAfterHeader) {
+    const retryAfter = parseRetryAfter(retryAfterHeader);
+    if (retryAfter !== null) {
+        return Math.min(retryAfter, TUNING.maxBackoffMs);
+    }
+    const exponential = Math.min(TUNING.baseBackoffMs * 2 ** (attempt - 1), TUNING.maxBackoffMs);
+    // Jitter keeps the parallel calls of a batch from retrying in lockstep.
+    return exponential + Math.floor(Math.random() * TUNING.jitterMs);
+}
+
+function describeFailure(status) {
+    if (status === 429) {
+        return "MyGate is rate limiting requests (HTTP 429). Please wait a few minutes and try again.";
+    }
+    if (status === 0) {
+        return "Could not reach MyGate.";
+    }
+    return `MyGate responded with HTTP ${status}.`;
+}
+
+function parseJson(body) {
+    try {
+        return JSON.parse(body);
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Performs a request against MyGate, retrying rate limited and transient
+ * failures with an exponential backoff. Never throws: the outcome is reported
+ * as `{ ok, status, body, attempts, error }`.
+ */
+async function requestWithRetry(method, url, headers, jsonData, budget) {
+    const body = JSON.stringify(jsonData);
+    let attempt = 0;
+    let status = 0;
+    let responseBody = "";
+    let retryAfterHeader = null;
+
+    while (attempt < TUNING.maxAttempts) {
+        if (!budget.take()) {
+            return {
+                ok: false,
+                status: status,
+                body: responseBody,
+                attempts: attempt,
+                budgetExhausted: true,
+                error: attempt === 0
+                    ? "Too many requests in a single call, please retry."
+                    : describeFailure(status)
+            };
+        }
+        attempt += 1;
+
+        try {
+            const response = await fetch(url, { method: method, headers: headers, body: body });
+            status = response.status;
+            responseBody = await response.text();
+            retryAfterHeader = response.headers.get("Retry-After");
+            if (response.ok) {
+                return { ok: true, status: status, body: responseBody, attempts: attempt };
+            }
+            if (!RETRYABLE_STATUSES.includes(status)) {
+                break;
+            }
+        } catch (error) {
+            status = 0;
+            responseBody = error.message;
+            retryAfterHeader = null;
+        }
+
+        if (attempt >= TUNING.maxAttempts || budget.remaining <= 0) {
+            break;
+        }
+        await sleep(backoffDelay(attempt, retryAfterHeader));
+    }
+
+    return {
+        ok: false,
+        status: status,
+        body: responseBody,
+        attempts: attempt,
+        error: describeFailure(status)
+    };
+}
+
+/**
+ * Runs `task` over `items` with at most `TUNING.concurrency` calls in flight,
+ * leaving `TUNING.spacingMs` between the calls started by a slot.
+ */
+async function mapWithConcurrency(items, task) {
+    const results = new Array(items.length);
+    let next = 0;
+
+    async function runSlot(slot) {
+        // Stagger the slots so a batch does not start as one burst.
+        await sleep(Math.floor((TUNING.spacingMs / TUNING.concurrency) * slot));
+        while (true) {
+            const index = next;
+            next += 1;
+            if (index >= items.length) {
+                return;
+            }
+            if (index >= TUNING.concurrency) {
+                await sleep(TUNING.spacingMs);
+            }
+            results[index] = await task(items[index], index);
+        }
+    }
+
+    const slots = [];
+    for (let slot = 0; slot < Math.min(TUNING.concurrency, items.length); slot++) {
+        slots.push(runSlot(slot));
+    }
+    await Promise.all(slots);
+    return results;
+}
+
+async function makeRequest(method, url, headers, jsonData, budget) {
+    const result = await requestWithRetry(method, url, headers, jsonData, budget);
+    if (!result.ok) {
+        const error = new Error(result.error);
+        error.status = result.status;
+        throw error;
+    }
+    return parseJson(result.body) ?? {};
 }
 
 async function readRequestBody(request) {
@@ -298,16 +518,16 @@ async function readRequestBody(request) {
     return request.text();
 }
 
-async function validateUser(mobileNumber) {
+async function validateUser(mobileNumber, budget) {
     const payload = {
         uname: mobileNumber,
         devicetype: "O",
         country_code: "91"
     };
-    return await makeRequest("POST", VALIDATE_URL, COMMON_HEADERS, payload);
+    return await makeRequest("POST", VALIDATE_URL, COMMON_HEADERS, payload, budget);
 }
 
-async function loginWithOtp(mobileNumber, otp) {
+async function loginWithOtp(mobileNumber, otp, budget) {
     const payload = {
         username: mobileNumber,
         country_code: "91",
@@ -316,16 +536,16 @@ async function loginWithOtp(mobileNumber, otp) {
         version: "3",
         type: "O"
     };
-    return await makeRequest("POST", LOGIN_URL, COMMON_HEADERS, payload);
+    return await makeRequest("POST", LOGIN_URL, COMMON_HEADERS, payload, budget);
 }
 
-async function getUserInfo(accessKey, userId) {
+async function getUserInfo(accessKey, userId, budget) {
     const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = { userid: userId };
-    return await makeRequest("POST", INFO_URL, headers, payload);
+    return await makeRequest("POST", INFO_URL, headers, payload, budget);
 }
 
-async function setupPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime) {
+async function setupPreapproveRequest(accessKey, userId, flatId, companyName, startTime, endTime, budget) {
     const headers = { ...COMMON_HEADERS, "access-key": accessKey };
     const payload = {
         isMulti: 0,
@@ -338,7 +558,16 @@ async function setupPreapproveRequest(accessKey, userId, flatId, companyName, st
         startTime: startTime,
         endTime: endTime
     };
-    return createRequest("POST", PREAPPROVE_URL, headers, payload);
+    return requestWithRetry("POST", PREAPPROVE_URL, headers, payload, budget);
+}
+
+function errorResponse(error, fallbackStatus = 500) {
+    const rateLimited = error.status === 429;
+    return new Response(JSON.stringify({
+        success: false,
+        error: error.message,
+        rate_limited: rateLimited
+    }), { status: rateLimited ? 429 : fallbackStatus });
 }
 
 async function handleSendOtp(requestBody) {
@@ -349,11 +578,11 @@ async function handleSendOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Missing mobile number" }), { status: 400 });
         }
 
-        await validateUser(mobileNumber);
+        await validateUser(mobileNumber, createSubrequestBudget());
 
         return new Response(JSON.stringify({ success: true, message: "OTP sent successfully" }), { status: 200 });
     } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+        return errorResponse(error);
     }
 }
 
@@ -366,7 +595,7 @@ async function handleVerifyOtp(requestBody) {
             return new Response(JSON.stringify({ error: "Missing mobile number or OTP" }), { status: 400 });
         }
 
-        const loginData = await loginWithOtp(mobileNumber, otp);
+        const loginData = await loginWithOtp(mobileNumber, otp, createSubrequestBudget());
         const accessKey = loginData.api_key;
         const userId = loginData.userid;
 
@@ -380,7 +609,7 @@ async function handleVerifyOtp(requestBody) {
             data: { "mobile_number": mobileNumber, "access_key": accessKey, "user_id": userId }
         }), { status: 200 });
     } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+        return errorResponse(error);
     }
 }
 
@@ -390,30 +619,40 @@ async function handlePreApprove(requestBody) {
         const accessKey = requestBody.access_key;
         const mobileNumber = requestBody.mobile_number;
         const companyName = requestBody.company_name;
-        const intervals = requestBody.allowed_times;
+        const intervals = Array.isArray(requestBody.allowed_times) ? requestBody.allowed_times : [];
 
         if (!userId || !mobileNumber || !companyName || !accessKey) {
             return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
         }
 
-        const userData = await getUserInfo(accessKey, userId);
+        const budget = createSubrequestBudget();
+        const userData = await getUserInfo(accessKey, userId, budget);
         const flatId = userData.activeflat;
 
         if (!flatId) {
             return new Response(JSON.stringify({ error: "flat_id not found in the user info response" }), { status: 400 });
         }
 
-        const requests = [];
-        for (const [start, end] of intervals) {
-            const request = setupPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end);
-            requests.push(request);
-        }
+        const results = await mapWithConcurrency(intervals, async ([start, end]) => {
+            const result = await setupPreapproveRequest(accessKey, userId, flatId, companyName.toUpperCase(), start, end, budget);
+            return { start: start, end: end, ...result };
+        });
 
-        const responses = await Promise.all(requests);
+        const failures = results.filter(result => !result.ok);
+        const rateLimited = failures.some(result => result.status === 429);
+        const errors = [...new Set(failures.map(result => result.error))];
 
-        return new Response(JSON.stringify({ success: true, responses: responses }), { status: 200 });
+        return new Response(JSON.stringify({
+            success: failures.length === 0,
+            total: results.length,
+            created: results.length - failures.length,
+            failed: failures.length,
+            rate_limited: rateLimited,
+            failed_intervals: failures.map(result => [result.start, result.end]),
+            error: errors.join(" ") || undefined
+        }), { status: failures.length === 0 ? 200 : (rateLimited ? 429 : 207) });
     } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+        return errorResponse(error);
     }
 }
 
@@ -441,6 +680,8 @@ async function handleRequest(request) {
     return new Response(JSON.stringify({ error: "Invalid endpoint" }), { status: 404 });
 }
 
-addEventListener("fetch", (event) => {
-    event.respondWith(handleRequest(event.request));
-});
+export default {
+    fetch(request) {
+        return handleRequest(request);
+    }
+};
